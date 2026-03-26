@@ -26,10 +26,6 @@ class InlineTransport implements Transport {
     this.onclose?.();
   }
 
-  /**
-   * Pass a JSON-RPC message to the server and wait for the response.
-   * For notifications (no id), returns null immediately.
-   */
   processRequest(msg: JSONRPCMessage): Promise<JSONRPCMessage | null> {
     if (!("id" in msg)) {
       this.onmessage?.(msg);
@@ -49,6 +45,33 @@ function getEnv(key: string): string {
   return value;
 }
 
+// ─── Module-scope cache: survives across warm invocations ───
+let cachedOdoo: OdooClient | null = null;
+let cachedUidTs = 0;
+const UID_TTL = 30 * 60 * 1000; // 30 min
+
+async function getOdooClient(): Promise<OdooClient> {
+  const now = Date.now();
+  if (cachedOdoo && (now - cachedUidTs) < UID_TTL) {
+    return cachedOdoo;
+  }
+  const odoo = new OdooClient({
+    url: getEnv("ODOO_URL"),
+    db: getEnv("ODOO_DB"),
+    login: getEnv("ODOO_LOGIN"),
+    apiKey: getEnv("ODOO_API_KEY"),
+  });
+  await odoo.authenticate();
+  cachedOdoo = odoo;
+  cachedUidTs = now;
+  return odoo;
+}
+
+function resetOdooClient() {
+  cachedOdoo = null;
+  cachedUidTs = 0;
+}
+
 export default async (req: Request, _context: Context) => {
   if (req.method === "DELETE") {
     return new Response(null, { status: 200 });
@@ -63,13 +86,14 @@ export default async (req: Request, _context: Context) => {
   try {
     const body = await req.json();
 
-    const odoo = new OdooClient({
-      url: getEnv("ODOO_URL"),
-      db: getEnv("ODOO_DB"),
-      login: getEnv("ODOO_LOGIN"),
-      apiKey: getEnv("ODOO_API_KEY"),
-    });
-    await odoo.authenticate();
+    let odoo: OdooClient;
+    try {
+      odoo = await getOdooClient();
+    } catch {
+      // Auth failed — reset cache and retry once
+      resetOdooClient();
+      odoo = await getOdooClient();
+    }
 
     const server = new McpServer({ name: "odoo-mcp-server", version: "1.0.0" });
     registerTools(server, odoo);
@@ -90,6 +114,10 @@ export default async (req: Request, _context: Context) => {
       headers: { "Content-Type": "application/json" },
     });
   } catch (err: any) {
+    // If Odoo auth error during tool execution, reset cache for next request
+    if (err.message?.includes("Authentication") || err.message?.includes("Access Denied")) {
+      resetOdooClient();
+    }
     return new Response(
       JSON.stringify({
         jsonrpc: "2.0",

@@ -5,6 +5,35 @@ export interface OdooConfig {
   apiKey: string;
 }
 
+// ─── Module-scope query cache (survives warm invocations) ───
+const queryCache = new Map<string, { data: unknown; expiresAt: number }>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 min
+
+function cacheKey(model: string, method: string, args: unknown[], kwargs: unknown): string {
+  return `${model}:${method}:${JSON.stringify(args)}:${JSON.stringify(kwargs)}`;
+}
+
+function getCached(key: string): unknown | undefined {
+  const entry = queryCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    queryCache.delete(key);
+    return undefined;
+  }
+  return entry.data;
+}
+
+function setCache(key: string, data: unknown): void {
+  queryCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL });
+  // Evict expired entries if cache grows large
+  if (queryCache.size > 200) {
+    const now = Date.now();
+    for (const [k, v] of queryCache) {
+      if (now > v.expiresAt) queryCache.delete(k);
+    }
+  }
+}
+
 interface JsonRpcResponse {
   jsonrpc: string;
   id: number;
@@ -121,7 +150,14 @@ export class OdooClient {
     if (limit !== undefined) kwargs.limit = limit;
     if (offset !== undefined) kwargs.offset = offset;
     if (order) kwargs.order = order;
-    return this.executeKw(model, "search_read", [domain], kwargs);
+
+    const key = cacheKey(model, "search_read", [domain], kwargs);
+    const cached = getCached(key);
+    if (cached !== undefined) return cached;
+
+    const result = await this.executeKw(model, "search_read", [domain], kwargs);
+    setCache(key, result);
+    return result;
   }
 
   async read(
@@ -131,7 +167,14 @@ export class OdooClient {
   ): Promise<unknown> {
     const kwargs: Record<string, unknown> = {};
     if (fields) kwargs.fields = fields;
-    return this.executeKw(model, "read", [ids], kwargs);
+
+    const key = cacheKey(model, "read", [ids], kwargs);
+    const cached = getCached(key);
+    if (cached !== undefined) return cached;
+
+    const result = await this.executeKw(model, "read", [ids], kwargs);
+    setCache(key, result);
+    return result;
   }
 
   async create(
@@ -157,7 +200,13 @@ export class OdooClient {
     model: string,
     domain: unknown[] = []
   ): Promise<unknown> {
-    return this.executeKw(model, "search_count", [domain]);
+    const key = cacheKey(model, "search_count", [domain], {});
+    const cached = getCached(key);
+    if (cached !== undefined) return cached;
+
+    const result = await this.executeKw(model, "search_count", [domain]);
+    setCache(key, result);
+    return result;
   }
 
   async fieldsGet(
@@ -166,7 +215,14 @@ export class OdooClient {
   ): Promise<unknown> {
     const kwargs: Record<string, unknown> = {};
     if (attributes) kwargs.attributes = attributes;
-    return this.executeKw(model, "fields_get", [], kwargs);
+
+    const key = cacheKey(model, "fields_get", [], kwargs);
+    const cached = getCached(key);
+    if (cached !== undefined) return cached;
+
+    const result = await this.executeKw(model, "fields_get", [], kwargs);
+    setCache(key, result);
+    return result;
   }
 
   async listModels(filter?: string): Promise<unknown> {
