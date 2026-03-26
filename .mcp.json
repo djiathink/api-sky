@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "odoo": {
+      "command": "node",
+      "args": ["C:\\Users\\renon\\Codes\\api-sky\\build\\index.js"],
+      "env": {
+        "ODOO_URL": "https://st.digital",
+        "ODOO_DB": "st",
+        "ODOO_LOGIN": "djia@l-agence.digital",
+        "ODOO_API_KEY": "bb7b240ce81b5651e2cb3fa61bbbd9cd6fae4671"
+      }
+    }
+  }
+}
