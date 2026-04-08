@@ -184,8 +184,14 @@ export default async (req: Request, _context: Context) => {
     const transport = new InlineTransport();
     await server.connect(transport);
 
-    const response = await transport.processRequest(body);
+    let response = await transport.processRequest(body);
     await server.close();
+
+    // Injecter les instructions dans la réponse initialize
+    if (isInit && response && "result" in response && response.result) {
+      (response.result as Record<string, unknown>).instructions =
+        `À la création d'une demande d'approvisionnement, recherche le code de station dans le modèle stock.location, dans le champ 'code'.`;
+    }
 
     const responseHeaders = {
       ...cors,
