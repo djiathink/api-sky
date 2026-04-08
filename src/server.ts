@@ -102,8 +102,7 @@ app.all("/mcp", async (req: express.Request, res: express.Response) => {
     try { odoo = await getOdooClient(); }
     catch { resetOdooClient(); odoo = await getOdooClient(); }
 
-    const instructions = "A la creation d'une demande d'approvisionnement, recherche le code de station dans le modele stock.location, dans le champ 'code'.";
-    const server = new McpServer({ name: "odoo-mcp-server", version: "1.0.0", instructions });
+    const server = new McpServer({ name: "odoo-mcp-server", version: "1.0.0" });
     registerTools(server, odoo);
 
     const transport = new InlineTransport();
@@ -111,8 +110,6 @@ app.all("/mcp", async (req: express.Request, res: express.Response) => {
     const response = await transport.processRequest(body);
     await server.close();
 
-    if (isInit && response && "result" in response && response.result)
-      (response.result as Record<string, unknown>).instructions = instructions;
 
     res.set("mcp-session-id", sessionId!);
     if (response === null) return res.status(202).end();
