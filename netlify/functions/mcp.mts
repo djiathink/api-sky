@@ -4,10 +4,14 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { OdooClient } from "../../src/odoo-client.js";
 import { registerTools } from "../../src/tools.js";
+import { randomUUID } from "crypto";
 
 /**
- * Custom transport that processes JSON-RPC messages directly,
- * bypassing the need for Node.js IncomingMessage/ServerResponse objects.
+ * Streamable HTTP Transport (MCP spec 2025-03-26)
+ * - Gestion des sessions via mcp-session-id
+ * - Support SSE (text/event-stream) et JSON selon Accept header
+ * - GET pour établir un flux SSE
+ * - DELETE pour fermer une session
  */
 class InlineTransport implements Transport {
   onclose?: () => void;
@@ -45,14 +49,14 @@ function getEnv(key: string): string {
   return value;
 }
 
-// ─── Module-scope cache: survives across warm invocations ───
+// ─── Odoo client cache (module-scope, survives warm invocations) ───
 let cachedOdoo: OdooClient | null = null;
 let cachedUidTs = 0;
 const UID_TTL = 30 * 60 * 1000; // 30 min
 
 async function getOdooClient(): Promise<OdooClient> {
   const now = Date.now();
-  if (cachedOdoo && (now - cachedUidTs) < UID_TTL) {
+  if (cachedOdoo && now - cachedUidTs < UID_TTL) {
     return cachedOdoo;
   }
   const odoo = new OdooClient({
@@ -72,25 +76,100 @@ function resetOdooClient() {
   cachedUidTs = 0;
 }
 
-export default async (req: Request, _context: Context) => {
-  if (req.method === "DELETE") {
-    return new Response(null, { status: 200 });
+// ─── Session store ───
+const sessions = new Map<string, { createdAt: number }>();
+const SESSION_TTL = 60 * 60 * 1000; // 1h
+
+function cleanupSessions() {
+  const now = Date.now();
+  for (const [id, s] of sessions) {
+    if (now - s.createdAt > SESSION_TTL) sessions.delete(id);
   }
+}
+
+// ─── SSE helper ───
+function formatSSE(data: unknown): string {
+  return `data: ${JSON.stringify(data)}\n\n`;
+}
+
+// ─── CORS headers ───
+function corsHeaders(origin: string) {
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, mcp-session-id, Accept",
+    "Access-Control-Expose-Headers": "mcp-session-id",
+  };
+}
+
+export default async (req: Request, _context: Context) => {
+  const origin = req.headers.get("origin") ?? "*";
+  const cors = corsHeaders(origin);
+
+  // ── CORS preflight ──
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: cors });
+  }
+
+  // ── DELETE : fermeture de session ──
+  if (req.method === "DELETE") {
+    const sid = req.headers.get("mcp-session-id");
+    if (sid) sessions.delete(sid);
+    return new Response(null, { status: 200, headers: cors });
+  }
+
+  // ── GET : établissement du flux SSE ──
+  if (req.method === "GET") {
+    const accept = req.headers.get("accept") ?? "";
+    if (!accept.includes("text/event-stream")) {
+      return new Response(JSON.stringify({ error: "Expected Accept: text/event-stream" }), {
+        status: 406,
+        headers: { ...cors, "Content-Type": "application/json" },
+      });
+    }
+    const sid = req.headers.get("mcp-session-id") ?? randomUUID();
+    return new Response(": ping\n\n", {
+      status: 200,
+      headers: {
+        ...cors,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "mcp-session-id": sid,
+      },
+    });
+  }
+
+  // ── POST : traitement des messages MCP ──
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
-      headers: { "Content-Type": "application/json" },
+      headers: { ...cors, "Content-Type": "application/json" },
     });
   }
 
   try {
-    const body = await req.json();
+    const rawBody = await req.text();
+    const body = JSON.parse(rawBody);
+    const accept = req.headers.get("accept") ?? "";
+    const useSSE = accept.includes("text/event-stream");
+    const isInit = body?.method === "initialize";
+
+    // Gestion de session
+    let sessionId = req.headers.get("mcp-session-id");
+    if (isInit) {
+      sessionId = randomUUID();
+      cleanupSessions();
+      sessions.set(sessionId, { createdAt: Date.now() });
+    } else if (!sessionId || !sessions.has(sessionId)) {
+      // Session inconnue : on crée une nouvelle session à la volée
+      sessionId = randomUUID();
+      sessions.set(sessionId, { createdAt: Date.now() });
+    }
 
     let odoo: OdooClient;
     try {
       odoo = await getOdooClient();
     } catch {
-      // Auth failed — reset cache and retry once
       resetOdooClient();
       odoo = await getOdooClient();
     }
@@ -102,19 +181,38 @@ export default async (req: Request, _context: Context) => {
     await server.connect(transport);
 
     const response = await transport.processRequest(body);
-
     await server.close();
 
+    const responseHeaders = {
+      ...cors,
+      "mcp-session-id": sessionId,
+    };
+
     if (response === null) {
-      return new Response(null, { status: 202 });
+      return new Response(null, { status: 202, headers: responseHeaders });
+    }
+
+    // Spec MCP 2025-03-26 : pour une réponse unique, toujours répondre en JSON.
+    // Le SSE n'est utilisé que si le client n'accepte PAS application/json
+    // (i.e. Accept: text/event-stream uniquement, sans application/json).
+    const acceptsJson = !useSSE || accept.includes("application/json");
+
+    if (!acceptsJson) {
+      return new Response(formatSSE(response), {
+        status: 200,
+        headers: {
+          ...responseHeaders,
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+        },
+      });
     }
 
     return new Response(JSON.stringify(response), {
       status: 200,
-      headers: { "Content-Type": "application/json" },
+      headers: { ...responseHeaders, "Content-Type": "application/json" },
     });
   } catch (err: any) {
-    // If Odoo auth error during tool execution, reset cache for next request
     if (err.message?.includes("Authentication") || err.message?.includes("Access Denied")) {
       resetOdooClient();
     }
@@ -124,7 +222,7 @@ export default async (req: Request, _context: Context) => {
         error: { code: -32603, message: err.message },
         id: null,
       }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      { status: 500, headers: { ...cors, "Content-Type": "application/json" } }
     );
   }
 };

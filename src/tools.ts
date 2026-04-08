@@ -8,7 +8,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
     "Search and read records from an Odoo model. Use domain filters like [[\"field\", \"=\", \"value\"]]. Returns matching records with specified fields.",
     {
       model: z.string().describe("Odoo model name, e.g. 'res.partner', 'sale.order', 'account.move'"),
-      domain: z.array(z.any()).default([]).describe("Odoo domain filter, e.g. [[\"state\",\"=\",\"draft\"]]"),
+      domain: z.array(z.unknown()).default([]).describe("Odoo domain filter, e.g. [[\"state\",\"=\",\"draft\"]]"),
       fields: z.array(z.string()).optional().describe("Fields to return, e.g. [\"name\", \"email\"]"),
       limit: z.number().optional().default(10).describe("Max records to return (default 10)"),
       offset: z.number().optional().describe("Number of records to skip"),
@@ -39,7 +39,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
     "Create a new record in an Odoo model. Returns the new record ID.",
     {
       model: z.string().describe("Odoo model name"),
-      values: z.record(z.any()).describe("Field values for the new record, e.g. {\"name\": \"John\", \"email\": \"john@example.com\"}"),
+      values: z.object({}).passthrough().describe("Field values for the new record, e.g. {\"name\": \"John\", \"email\": \"john@example.com\"}"),
     },
     async ({ model, values }) => {
       const result = await odoo.create(model, values);
@@ -53,7 +53,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
     {
       model: z.string().describe("Odoo model name"),
       ids: z.array(z.number()).describe("List of record IDs to update"),
-      values: z.record(z.any()).describe("Field values to update"),
+      values: z.object({}).passthrough().describe("Field values to update"),
     },
     async ({ model, ids, values }) => {
       const result = await odoo.write(model, ids, values);
@@ -79,7 +79,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
     "Count records matching a domain filter in an Odoo model.",
     {
       model: z.string().describe("Odoo model name"),
-      domain: z.array(z.any()).default([]).describe("Odoo domain filter"),
+      domain: z.array(z.unknown()).default([]).describe("Odoo domain filter"),
     },
     async ({ model, domain }) => {
       const result = await odoo.searchCount(model, domain);
@@ -121,7 +121,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
         id: z.string().describe("Unique identifier for this operation"),
         method: z.enum(["search_read", "read", "search_count", "fields_get"]).describe("Odoo method"),
         model: z.string().describe("Odoo model name"),
-        domain: z.array(z.any()).optional().default([]).describe("Domain filter"),
+        domain: z.array(z.unknown()).optional().default([]).describe("Domain filter"),
         fields: z.array(z.string()).optional().describe("Fields to return"),
         limit: z.number().optional().describe("Max records"),
         offset: z.number().optional().describe("Records to skip"),
