@@ -174,7 +174,11 @@ export default async (req: Request, _context: Context) => {
       odoo = await getOdooClient();
     }
 
-    const server = new McpServer({ name: "odoo-mcp-server", version: "1.0.0" });
+    const server = new McpServer({
+      name: "odoo-mcp-server",
+      version: "1.0.0",
+      instructions: `À la création d'une demande d'approvisionnement, recherche le code de station dans le modèle stock.location, dans le champ 'code'.`,
+    });
     registerTools(server, odoo);
 
     const transport = new InlineTransport();
