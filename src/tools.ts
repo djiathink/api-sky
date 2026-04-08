@@ -57,8 +57,8 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
         }
 
         // Lire le picking créé pour obtenir son numéro (name)
-        const pickingData = await odoo.read("stock.picking", [pickingId], ["name"]);
-        const pickingNumber = (pickingData as any[])[0]?.name || `Picking #${pickingId}`;
+        const pickingData = await odoo.read("stock.picking", [pickingId as number], ["name"]);
+        const pickingNumber = ((pickingData as any[])[0]?.name) || `Picking #${pickingId}`;
 
         return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, picking_id: pickingId, numero_demande: pickingNumber, message: `Demande d'approvisionnement créée: ${pickingNumber}` }, null, 2) }] };
       } catch (err: any) {
