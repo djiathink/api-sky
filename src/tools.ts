@@ -30,11 +30,13 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
         }
 
         const stationId = (stations as any[])[0].id;
+        const now = new Date().toISOString().replace("T", " ").substring(0, 19);
         const pickingValues: Record<string, any> = {
           location_dest_id: stationId,
           picking_type_id: null,
           origin: `Approvisionnement depuis ${code_station}`,
           company_id: companyId,
+          scheduled_date: now,
         };
 
         // Chercher le type de picking pour les transferts entrants
