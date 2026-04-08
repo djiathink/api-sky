@@ -7,6 +7,9 @@ import { OdooClient } from "./odoo-client.js";
 import { registerTools } from "./tools.js";
 import { randomUUID } from "crypto";
 
+// STE NEPTUNE OIL SA — fixed company ID
+const COMPANY_ID = 1;
+
 class InlineTransport implements Transport {
   onclose?: () => void;
   onerror?: (error: Error) => void;
@@ -108,13 +111,12 @@ app.all("/mcp", async (req: express.Request, res: express.Response) => {
     catch { resetOdooClient(); odoo = await getOdooClient(); }
 
     const server = new McpServer({ name: "odoo-mcp-server", version: "1.0.0" });
-    registerTools(server, odoo);
+    registerTools(server, odoo, COMPANY_ID);
 
     const transport = new InlineTransport();
     await server.connect(transport);
     const response = await transport.processRequest(body);
     await server.close();
-
 
     res.set("mcp-session-id", sessionId!);
     if (response === null) return res.status(202).end();

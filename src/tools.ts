@@ -2,7 +2,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { OdooClient } from "./odoo-client.js";
 
-export function registerTools(server: McpServer, odoo: OdooClient) {
+export function registerTools(server: McpServer, odoo: OdooClient, companyId: number) {
+  // Append company filter to every domain
+  function co(domain: any[]): any[] {
+    return [...domain, ["company_id", "=", companyId]];
+  }
+
   // ─── Tool 1: Créer une demande d'approvisionnement ───
   server.tool(
     "passer_demande_approvisionnement",
@@ -19,7 +24,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
     async ({ code_station, produits_quantites }) => {
       try {
         // Vérifier que la station existe
-        const stations = await odoo.searchRead("stock.location", [["code", "=", code_station]], ["id", "name"], 1);
+        const stations = await odoo.searchRead("stock.location", co([["code", "=", code_station]]), ["id", "name"], 1);
         if (!stations || (stations as any[]).length === 0) {
           return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Station avec le code '${code_station}' non trouvée` }, null, 2) }] };
         }
@@ -27,12 +32,13 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
         const stationId = (stations as any[])[0].id;
         const pickingValues: Record<string, any> = {
           location_dest_id: stationId,
-          picking_type_id: null, // sera cherché
+          picking_type_id: null,
           origin: `Approvisionnement depuis ${code_station}`,
+          company_id: companyId,
         };
 
         // Chercher le type de picking pour les transferts entrants
-        const pickingTypes = await odoo.searchRead("stock.picking.type", [["code", "=", "incoming"]], ["id"], 1);
+        const pickingTypes = await odoo.searchRead("stock.picking.type", co([["code", "=", "incoming"]]), ["id"], 1);
         if (pickingTypes && (pickingTypes as any[]).length > 0) {
           pickingValues.picking_type_id = (pickingTypes as any[])[0].id;
         }
@@ -47,7 +53,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
             let productId = item.product_id;
             if (!productId || productId === 0) {
               if (!item.product_name) throw new Error("product_id ou product_name requis");
-              const found = await odoo.searchRead("product.product", [["name", "ilike", item.product_name]], ["id", "name"], 5);
+              const found = await odoo.searchRead("product.product", co([["name", "ilike", item.product_name]]), ["id", "name"], 5);
               if (!found || (found as any[]).length === 0) throw new Error(`Produit "${item.product_name}" introuvable dans Odoo`);
               productId = (found as any[])[0].id;
             }
@@ -66,6 +72,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
               location_id: 8,
               location_dest_id: stationId,
               name: item.product_name || String(productId),
+              company_id: companyId,
             };
             await odoo.create("stock.move", moveValues);
           }
@@ -93,7 +100,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
       try {
         const pickings = await odoo.searchRead(
           "stock.picking",
-          [["name", "=", numero_demande]],
+          co([["name", "=", numero_demande]]),
           ["id", "name", "state", "picking_type_id", "location_id", "location_dest_id", "scheduled_date", "date_done"],
           1
         );
@@ -123,8 +130,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
     },
     async ({ quantite_inventoriee, code_produit, code_location, product_id, location_id }) => {
       try {
-        // Construire le domaine de recherche
-        const domain: any[] = [];
+        const domain: any[] = [["company_id", "=", companyId]];
 
         if (product_id) {
           domain.push(["product_id", "=", product_id]);
@@ -138,7 +144,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
           domain.push(["location_id.code", "=", code_location]);
         }
 
-        if (domain.length === 0) {
+        if (domain.length === 1) {
           return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Vous devez fournir au minimum le code_produit OU code_location, ou les IDs correspondants" }, null, 2) }] };
         }
 
@@ -180,7 +186,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
     async ({ code_pompe, indices_pompe, encaissements }) => {
       try {
         // Vérifier que la pompe existe
-        const pompes = await odoo.searchRead("stock.location", [["code", "=", code_pompe]], ["id", "name"], 1);
+        const pompes = await odoo.searchRead("stock.location", co([["code", "=", code_pompe]]), ["id", "name"], 1);
         if (!pompes || (pompes as any[]).length === 0) {
           return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Pompe avec le code '${code_pompe}' non trouvée` }, null, 2) }] };
         }
@@ -197,6 +203,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
               index_initial: index.index_initial || 0,
               index_final: index.index_final,
               quantity: index.quantite || 0,
+              company_id: companyId,
             };
             const indexId = await odoo.create("gas.pump.index.line", indexValues);
             results.indices_created.push(indexId);
@@ -210,6 +217,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
               pump_id: pompeId,
               payment_method_id: encaissement.payment_method_id,
               amount: encaissement.montant,
+              company_id: companyId,
             };
             const moneyId = await odoo.create("gas.pump.money.collected", moneyValues);
             results.money_collected_created.push(moneyId);
