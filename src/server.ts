@@ -19,6 +19,11 @@ class InlineTransport implements Transport {
 
   processRequest(msg: JSONRPCMessage): Promise<JSONRPCMessage | null> {
     if (!("id" in msg)) { this.onmessage?.(msg); return Promise.resolve(null); }
+    // Return empty lists for unsupported MCP methods so Anthropic does not error
+    const method = (msg as Record<string, unknown>).method as string;
+    const id = (msg as Record<string, unknown>).id;
+    if (method === "resources/list") return Promise.resolve({ jsonrpc: "2.0", id, result: { resources: [] } } as JSONRPCMessage);
+    if (method === "prompts/list")   return Promise.resolve({ jsonrpc: "2.0", id, result: { prompts: [] } } as JSONRPCMessage);
     return new Promise<JSONRPCMessage>((resolve, reject) => {
       this._resolve = resolve;
       setTimeout(() => reject(new Error("MCP request timed out")), 25000);
