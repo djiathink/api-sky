@@ -43,14 +43,29 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
         // Ajouter les mouvements de stock si fournis
         if (produits_quantites && produits_quantites.length > 0) {
           for (const item of produits_quantites) {
+            // Auto-resolve product ID from name if not provided or 0
+            let productId = item.product_id;
+            if (!productId || productId === 0) {
+              if (!item.product_name) throw new Error("product_id ou product_name requis");
+              const found = await odoo.searchRead("product.product", [["name", "ilike", item.product_name]], ["id", "name"], 5);
+              if (!found || (found as any[]).length === 0) throw new Error(`Produit "${item.product_name}" introuvable dans Odoo`);
+              productId = (found as any[])[0].id;
+            }
+            // Auto-resolve unit of measure if not provided
+            let uomId = item.unit_of_measure_id;
+            if (!uomId) {
+              const prod = await odoo.read("product.product", [productId], ["uom_id"]);
+              uomId = ((prod as any[])[0]?.uom_id?.[0]) || 1;
+            }
             const moveValues = {
               picking_id: pickingId,
-              product_id: item.product_id,
+              product_id: productId,
               quantity: item.quantity,
               product_uom_qty: item.quantity,
-              product_uom: item.unit_of_measure_id,
-              location_id: 8, // Stock par défaut
+              product_uom: uomId,
+              location_id: 8,
               location_dest_id: stationId,
+              name: item.product_name || String(productId),
             };
             await odoo.create("stock.move", moveValues);
           }
