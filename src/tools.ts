@@ -46,7 +46,7 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
             const moveValues = {
               picking_id: pickingId,
               product_id: item.product_id,
-              quantity_done: item.quantity,
+              quantity: item.quantity,
               product_uom_qty: item.quantity,
               product_uom: item.unit_of_measure_id,
               location_id: 8, // Stock par défaut
