@@ -3,179 +3,231 @@ import { z } from "zod";
 import { OdooClient } from "./odoo-client.js";
 
 export function registerTools(server: McpServer, odoo: OdooClient) {
+  // ─── Tool 1: Créer une demande d'approvisionnement ───
   server.tool(
-    "odoo_search_read",
-    "Search and read records from an Odoo model. Use domain filters like [[\"field\", \"=\", \"value\"]]. Returns matching records with specified fields.",
+    "passer_demande_approvisionnement",
+    "Passer une demande d'approvisionnement. Paramètres requis: code_station (stock.location.code). Paramètres optionnels: produits_quantites (liste des produits et quantités à commander).",
     {
-      model: z.string().describe("Odoo model name, e.g. 'res.partner', 'sale.order', 'account.move'"),
-      domain: z.array(z.unknown()).default([]).describe("Odoo domain filter, e.g. [[\"state\",\"=\",\"draft\"]]"),
-      fields: z.array(z.string()).optional().describe("Fields to return, e.g. [\"name\", \"email\"]"),
-      limit: z.number().optional().default(10).describe("Max records to return (default 10)"),
-      offset: z.number().optional().describe("Number of records to skip"),
-      order: z.string().optional().describe("Sort order, e.g. 'name asc' or 'id desc'"),
+      code_station: z.string().describe("Code de la station (stock.location.code) - REQUIS"),
+      produits_quantites: z.array(z.object({
+        product_id: z.number().describe("ID du produit dans Odoo"),
+        product_name: z.string().optional().describe("Nom du produit"),
+        quantity: z.number().describe("Quantité à commander"),
+        unit_of_measure_id: z.number().optional().describe("ID de l'unité de mesure (par défaut: unité standard du produit)"),
+      })).optional().describe("Liste des produits et quantités. Correspond à stock.move"),
     },
-    async ({ model, domain, fields, limit, offset, order }) => {
-      const result = await odoo.searchRead(model, domain, fields, limit, offset, order);
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
-    }
-  );
+    async ({ code_station, produits_quantites }) => {
+      try {
+        // Vérifier que la station existe
+        const stations = await odoo.searchRead("stock.location", [["code", "=", code_station]], ["id", "name"], 1);
+        if (!stations || (stations as any[]).length === 0) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Station avec le code '${code_station}' non trouvée` }, null, 2) }] };
+        }
 
-  server.tool(
-    "odoo_read",
-    "Read specific records by their IDs from an Odoo model.",
-    {
-      model: z.string().describe("Odoo model name"),
-      ids: z.array(z.number()).describe("List of record IDs to read"),
-      fields: z.array(z.string()).optional().describe("Fields to return"),
-    },
-    async ({ model, ids, fields }) => {
-      const result = await odoo.read(model, ids, fields);
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
-    }
-  );
+        const stationId = (stations as any[])[0].id;
+        const pickingValues: Record<string, any> = {
+          location_dest_id: stationId,
+          picking_type_id: null, // sera cherché
+          origin: `Approvisionnement depuis ${code_station}`,
+        };
 
-  server.tool(
-    "odoo_create",
-    "Create a new record in an Odoo model. Returns the new record ID.",
-    {
-      model: z.string().describe("Odoo model name"),
-      values: z.object({}).passthrough().describe("Field values for the new record, e.g. {\"name\": \"John\", \"email\": \"john@example.com\"}"),
-    },
-    async ({ model, values }) => {
-      const result = await odoo.create(model, values);
-      return { content: [{ type: "text" as const, text: JSON.stringify({ id: result }, null, 2) }] };
-    }
-  );
+        // Chercher le type de picking pour les transferts entrants
+        const pickingTypes = await odoo.searchRead("stock.picking.type", [["code", "=", "incoming"]], ["id"], 1);
+        if (pickingTypes && (pickingTypes as any[]).length > 0) {
+          pickingValues.picking_type_id = (pickingTypes as any[])[0].id;
+        }
 
-  server.tool(
-    "odoo_update",
-    "Update existing records in an Odoo model.",
-    {
-      model: z.string().describe("Odoo model name"),
-      ids: z.array(z.number()).describe("List of record IDs to update"),
-      values: z.object({}).passthrough().describe("Field values to update"),
-    },
-    async ({ model, ids, values }) => {
-      const result = await odoo.write(model, ids, values);
-      return { content: [{ type: "text" as const, text: JSON.stringify({ success: result }, null, 2) }] };
-    }
-  );
+        // Créer le picking
+        const pickingId = await odoo.create("stock.picking", pickingValues);
 
-  server.tool(
-    "odoo_delete",
-    "Delete records from an Odoo model. Use with caution.",
-    {
-      model: z.string().describe("Odoo model name"),
-      ids: z.array(z.number()).describe("List of record IDs to delete"),
-    },
-    async ({ model, ids }) => {
-      const result = await odoo.unlink(model, ids);
-      return { content: [{ type: "text" as const, text: JSON.stringify({ success: result }, null, 2) }] };
-    }
-  );
-
-  server.tool(
-    "odoo_count",
-    "Count records matching a domain filter in an Odoo model.",
-    {
-      model: z.string().describe("Odoo model name"),
-      domain: z.array(z.unknown()).default([]).describe("Odoo domain filter"),
-    },
-    async ({ model, domain }) => {
-      const result = await odoo.searchCount(model, domain);
-      return { content: [{ type: "text" as const, text: JSON.stringify({ count: result }, null, 2) }] };
-    }
-  );
-
-  server.tool(
-    "odoo_list_models",
-    "List available Odoo models. Optionally filter by name.",
-    {
-      filter: z.string().optional().describe("Optional filter to search models by name"),
-    },
-    async ({ filter }) => {
-      const result = await odoo.listModels(filter);
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-
-  server.tool(
-    "odoo_get_fields",
-    "Get field definitions for an Odoo model. Useful to discover available fields before querying.",
-    {
-      model: z.string().describe("Odoo model name"),
-      attributes: z.array(z.string()).optional().default(["string", "type", "required", "readonly", "relation"]).describe("Field attributes to return"),
-    },
-    async ({ model, attributes }) => {
-      const result = await odoo.fieldsGet(model, attributes);
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-
-  // ─── Batch tool: execute multiple read operations in a single HTTP request ───
-  server.tool(
-    "odoo_batch",
-    "Execute multiple Odoo read operations in a single request. Returns all results at once, reducing HTTP round trips.",
-    {
-      operations: z.array(z.object({
-        id: z.string().describe("Unique identifier for this operation"),
-        method: z.enum(["search_read", "read", "search_count", "fields_get"]).describe("Odoo method"),
-        model: z.string().describe("Odoo model name"),
-        domain: z.array(z.unknown()).optional().default([]).describe("Domain filter"),
-        fields: z.array(z.string()).optional().describe("Fields to return"),
-        limit: z.number().optional().describe("Max records"),
-        offset: z.number().optional().describe("Records to skip"),
-        order: z.string().optional().describe("Sort order"),
-      })).describe("Array of operations to execute in parallel"),
-    },
-    async ({ operations }) => {
-      const results = await Promise.all(
-        operations.map(async (op) => {
-          try {
-            let result: unknown;
-            switch (op.method) {
-              case "search_read":
-                result = await odoo.searchRead(op.model, op.domain, op.fields, op.limit, op.offset, op.order);
-                break;
-              case "read":
-                result = await odoo.read(op.model, op.domain as unknown as number[], op.fields);
-                break;
-              case "search_count":
-                result = await odoo.searchCount(op.model, op.domain);
-                break;
-              case "fields_get":
-                result = await odoo.fieldsGet(op.model, op.fields);
-                break;
-            }
-            return { id: op.id, result };
-          } catch (err: any) {
-            return { id: op.id, error: err.message };
+        // Ajouter les mouvements de stock si fournis
+        if (produits_quantites && produits_quantites.length > 0) {
+          for (const item of produits_quantites) {
+            const moveValues = {
+              picking_id: pickingId,
+              product_id: item.product_id,
+              quantity_done: item.quantity,
+              product_uom_qty: item.quantity,
+              product_uom: item.unit_of_measure_id,
+              location_id: 8, // Stock par défaut
+              location_dest_id: stationId,
+            };
+            await odoo.create("stock.move", moveValues);
           }
-        })
-      );
-      return { content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }] };
+        }
+
+        // Lire le picking créé pour obtenir son numéro (name)
+        const pickingData = await odoo.read("stock.picking", [pickingId], ["name"]);
+        const pickingNumber = (pickingData as any[])[0]?.name || `Picking #${pickingId}`;
+
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, picking_id: pickingId, numero_demande: pickingNumber, message: `Demande d'approvisionnement créée: ${pickingNumber}` }, null, 2) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }, null, 2) }] };
+      }
     }
   );
 
-  // ─── Resolve multiple user emails in a single query ───
+  // ─── Tool 2: Suivre le statut de la demande d'approvisionnement ───
   server.tool(
-    "odoo_resolve_users",
-    "Resolve multiple user emails/logins to Odoo user records in a single query. Much faster than looking up users one by one.",
+    "suivre_statut_approvisionnement",
+    "Suivre le statut d'une demande d'approvisionnement. Paramètre requis: numero_demande (le champ 'name' du stock.picking).",
     {
-      emails: z.array(z.string()).describe("List of user emails/logins to resolve"),
-      fields: z.array(z.string()).optional().default(["id", "name", "login", "email"]).describe("Fields to return"),
+      numero_demande: z.string().describe("Numéro de la demande d'approvisionnement (stock.picking.name) - REQUIS"),
     },
-    async ({ emails, fields }) => {
-      if (emails.length === 0) {
-        return { content: [{ type: "text" as const, text: "[]" }] };
+    async ({ numero_demande }) => {
+      try {
+        const pickings = await odoo.searchRead(
+          "stock.picking",
+          [["name", "=", numero_demande]],
+          ["id", "name", "state", "picking_type_id", "location_id", "location_dest_id", "scheduled_date", "date_done"],
+          1
+        );
+
+        if (!pickings || (pickings as any[]).length === 0) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Demande d'approvisionnement '${numero_demande}' non trouvée` }, null, 2) }] };
+        }
+
+        const picking = (pickings as any[])[0];
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, picking }, null, 2) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }, null, 2) }] };
       }
-      const result = await odoo.searchRead(
-        "res.users",
-        [["login", "in", emails]],
-        fields,
-        emails.length
-      );
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Tool 3: Effectuer un relevé de cuve ───
+  server.tool(
+    "releve_cuve",
+    "Effectuer un relevé de cuve (stock.quant). Paramètre requis: quantite_inventoriee (inventory_quantity du model stock.quant). Paramètres optionnels: code_produit ou code_location.",
+    {
+      quantite_inventoriee: z.number().describe("Quantité inventoriée (stock.quant.inventory_quantity) - REQUIS"),
+      code_produit: z.string().optional().describe("Code du produit (product.product.default_code) pour filtrer"),
+      code_location: z.string().optional().describe("Code de la localisation (stock.location.code) pour filtrer"),
+      product_id: z.number().optional().describe("ID du produit si connu"),
+      location_id: z.number().optional().describe("ID de la localisation si connu"),
+    },
+    async ({ quantite_inventoriee, code_produit, code_location, product_id, location_id }) => {
+      try {
+        // Construire le domaine de recherche
+        const domain: any[] = [];
+
+        if (product_id) {
+          domain.push(["product_id", "=", product_id]);
+        } else if (code_produit) {
+          domain.push(["product_id.default_code", "=", code_produit]);
+        }
+
+        if (location_id) {
+          domain.push(["location_id", "=", location_id]);
+        } else if (code_location) {
+          domain.push(["location_id.code", "=", code_location]);
+        }
+
+        if (domain.length === 0) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Vous devez fournir au minimum le code_produit OU code_location, ou les IDs correspondants" }, null, 2) }] };
+        }
+
+        // Rechercher les quants
+        const quants = await odoo.searchRead("stock.quant", domain, ["id", "product_id", "location_id", "quantity", "inventory_quantity"], 100);
+
+        if (!quants || (quants as any[]).length === 0) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Aucun quant trouvé avec les critères fournis" }, null, 2) }] };
+        }
+
+        // Mettre à jour la quantité inventoriée pour tous les quants trouvés
+        const quantIds = (quants as any[]).map((q) => q.id);
+        await odoo.write("stock.quant", quantIds, { inventory_quantity: quantite_inventoriee });
+
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, updated_count: quantIds.length, message: `${quantIds.length} relevé(s) de cuve mis à jour avec la quantité ${quantite_inventoriee}` }, null, 2) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }, null, 2) }] };
+      }
+    }
+  );
+
+  // ─── Tool 4: Effectuer un relevé de pompe ───
+  server.tool(
+    "releve_pompe",
+    "Effectuer un relevé de pompe. Paramètre requis: code_pompe (stock.location.code). Paramètres optionnels: indices_pompe (liste des lectures) et encaissements (montants collectés par méthode de paiement).",
+    {
+      code_pompe: z.string().describe("Code de la pompe (stock.location.code) - REQUIS"),
+      indices_pompe: z.array(z.object({
+        product_id: z.number().describe("ID du produit"),
+        index_initial: z.number().optional().describe("Index initial du compteur"),
+        index_final: z.number().describe("Index final du compteur (gas.pump.index.line)"),
+        quantite: z.number().optional().describe("Quantité délivrée"),
+      })).optional().describe("Liste des indices de pompe (gas.pump.index.line)"),
+      encaissements: z.array(z.object({
+        payment_method_id: z.number().describe("ID de la méthode de paiement (account.payment.method.line)"),
+        montant: z.number().describe("Montant encaissé par cette méthode"),
+      })).optional().describe("Liste des encaissements par méthode de paiement (gas.pump.money.collected)"),
+    },
+    async ({ code_pompe, indices_pompe, encaissements }) => {
+      try {
+        // Vérifier que la pompe existe
+        const pompes = await odoo.searchRead("stock.location", [["code", "=", code_pompe]], ["id", "name"], 1);
+        if (!pompes || (pompes as any[]).length === 0) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Pompe avec le code '${code_pompe}' non trouvée` }, null, 2) }] };
+        }
+
+        const pompeId = (pompes as any[])[0].id;
+        const results: any = { success: true, pump_id: pompeId, indices_created: [] as number[], money_collected_created: [] as number[] };
+
+        // Enregistrer les indices de pompe
+        if (indices_pompe && indices_pompe.length > 0) {
+          for (const index of indices_pompe) {
+            const indexValues = {
+              pump_id: pompeId,
+              product_id: index.product_id,
+              index_initial: index.index_initial || 0,
+              index_final: index.index_final,
+              quantity: index.quantite || 0,
+            };
+            const indexId = await odoo.create("gas.pump.index.line", indexValues);
+            results.indices_created.push(indexId);
+          }
+        }
+
+        // Enregistrer les encaissements
+        if (encaissements && encaissements.length > 0) {
+          for (const encaissement of encaissements) {
+            const moneyValues = {
+              pump_id: pompeId,
+              payment_method_id: encaissement.payment_method_id,
+              amount: encaissement.montant,
+            };
+            const moneyId = await odoo.create("gas.pump.money.collected", moneyValues);
+            results.money_collected_created.push(moneyId);
+          }
+        }
+
+        results.message = `Relevé de pompe enregistré: ${results.indices_created.length} indice(s) et ${results.money_collected_created.length} encaissement(s)`;
+        return { content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }, null, 2) }] };
+      }
+    }
+  );
+
+  // ─── Tool pour les opérations non autorisées ───
+  server.tool(
+    "unauthorized_operation",
+    "Tentative d'effectuer une opération non autorisée.",
+    {
+      operation: z.string().describe("Nom de l'opération tentée"),
+    },
+    async ({ operation }) => {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              error: "Opération non autorisée",
+              message: `L'opération '${operation}' n'est pas autorisée par ce MCP. Les seules opérations autorisées sont: passer_demande_approvisionnement, suivre_statut_approvisionnement, releve_cuve, releve_pompe`,
+            }, null, 2),
+          },
+        ],
+      };
     }
   );
 }
