@@ -18,7 +18,7 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
     },
     async ({ nom, code }) => {
       try {
-        const domain: any[] = [];
+        const domain: any[] = [["is_gas_oil_location", "=", true], ["gas_oil_location_type", "=", "station"]];
         if (code) {
           domain.push(["code", "=", code]);
         } else if (nom) {
@@ -27,7 +27,7 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
           return { content: [{ type: "text" as const, text: JSON.stringify({ error: "Fournir nom ou code" }, null, 2) }] };
         }
 
-        const stations = await odoo.searchRead("stock.location", domain, ["id", "name", "complete_name", "usage"], 20);
+        const stations = await odoo.searchRead("stock.location", domain, ["id", "name", "complete_name", "code"], 20);
         return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, stations }, null, 2) }] };
       } catch (err: any) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }, null, 2) }] };
@@ -46,8 +46,8 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
       try {
         const cuves = await odoo.searchRead(
           "stock.location",
-          [["location_id", "=", station_id], ["usage", "=", "internal"]],
-          ["id", "name", "complete_name", "usage"],
+          [["location_id", "=", station_id], ["is_gas_oil_location", "=", true], ["gas_oil_location_type", "=", "tank"]],
+          ["id", "name", "complete_name", "code"],
           50
         );
         return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, cuves }, null, 2) }] };
