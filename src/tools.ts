@@ -2,12 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { OdooClient } from "./odoo-client.js";
 
-export function registerTools(server: McpServer, odoo: OdooClient, companyId: number) {
-  // Filtre société — uniquement pour les modèles qui ont company_id
-  function co(domain: any[]): any[] {
-    return [...domain, ["company_id", "=", companyId]];
-  }
-
+export function registerTools(server: McpServer, odoo: OdooClient) {
   // ─── Tool: Rechercher une station ───
   server.tool(
     "rechercher_stations",
@@ -68,7 +63,7 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
       try {
         const pompes = await odoo.searchRead(
           "gas.pump",
-          co([["station_id", "=", station_id]]),
+          [["station_id", "=", station_id]],
           ["id", "name", "code", "station_id"],
           50
         );
@@ -105,11 +100,10 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
           location_dest_id: stationId,
           picking_type_id: null,
           origin: `Approvisionnement depuis ${code_station}`,
-          company_id: companyId,
           scheduled_date: now,
         };
 
-        const pickingTypes = await odoo.searchRead("stock.picking.type", co([["code", "=", "incoming"]]), ["id"], 1);
+        const pickingTypes = await odoo.searchRead("stock.picking.type", [["code", "=", "incoming"]], ["id"], 1);
         if (pickingTypes && (pickingTypes as any[]).length > 0) {
           pickingValues.picking_type_id = (pickingTypes as any[])[0].id;
         }
@@ -121,7 +115,7 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
             let productId = item.product_id;
             if (!productId || productId === 0) {
               if (!item.product_name) throw new Error("product_id ou product_name requis");
-              const found = await odoo.searchRead("product.product", co([["name", "ilike", item.product_name]]), ["id", "name"], 5);
+              const found = await odoo.searchRead("product.product", [["name", "ilike", item.product_name]], ["id", "name"], 5);
               if (!found || (found as any[]).length === 0) throw new Error(`Produit "${item.product_name}" introuvable`);
               productId = (found as any[])[0].id;
             }
@@ -139,7 +133,6 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
               location_id: 8,
               location_dest_id: stationId,
               name: item.product_name || String(productId),
-              company_id: companyId,
             });
           }
         }
@@ -165,7 +158,7 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
       try {
         const pickings = await odoo.searchRead(
           "stock.picking",
-          co([["name", "=", numero_demande]]),
+          [["name", "=", numero_demande]],
           ["id", "name", "state", "picking_type_id", "location_id", "location_dest_id", "scheduled_date", "date_done"],
           1
         );
@@ -192,7 +185,7 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
     },
     async ({ quantite_inventoriee, location_id, code_location, product_id, code_produit }) => {
       try {
-        const domain: any[] = [["company_id", "=", companyId]];
+        const domain: any[] = [];
 
         if (location_id) {
           domain.push(["location_id", "=", location_id]);
@@ -252,7 +245,6 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
               index_initial: index.index_initial || 0,
               index_final: index.index_final,
               quantity: index.quantite || 0,
-              company_id: companyId,
             });
             results.indices_created.push(indexId);
           }
@@ -264,7 +256,6 @@ export function registerTools(server: McpServer, odoo: OdooClient, companyId: nu
               pump_id,
               payment_method_id: enc.payment_method_id,
               amount: enc.montant,
-              company_id: companyId,
             });
             results.money_collected_created.push(moneyId);
           }
