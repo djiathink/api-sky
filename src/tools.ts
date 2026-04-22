@@ -414,17 +414,24 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
 
   server.tool(
     "odoo_resolve_users",
-    "Résout les utilisateurs Odoo par login (email) ou ID.",
+    "Résout les utilisateurs Odoo par login (email) ou ID. Accepte 'logins' ou 'emails' comme paramètre.",
     {
-      logins: z.array(z.string()).optional().describe("Liste d'emails à résoudre"),
+      logins: z.array(z.string()).optional().describe("Liste d'emails/logins à résoudre"),
+      emails: z.array(z.string()).optional().describe("Alias de logins"),
       ids: z.array(z.number()).optional().describe("Liste d'IDs utilisateurs"),
+      fields: z.array(z.string()).optional().describe("Champs à retourner"),
     },
-    async ({ logins, ids }) => {
+    async ({ logins, emails, ids, fields }) => {
       try {
+        const loginList = logins ?? emails ?? [];
         const domain: unknown[] = [];
-        if (logins?.length) domain.push(["login", "in", logins]);
+        if (loginList.length) domain.push(["login", "in", loginList]);
         else if (ids?.length) domain.push(["id", "in", ids]);
-        const result = await odoo.searchRead("res.users", domain, ["id", "name", "login", "email"], 100);
+        else {
+          return { content: [{ type: "text" as const, text: "[]" }] };
+        }
+        const returnFields = fields ?? ["id", "name", "login", "email"];
+        const result = await odoo.searchRead("res.users", domain, returnFields, 500);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       } catch (err: any) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
