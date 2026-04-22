@@ -268,4 +268,191 @@ export function registerTools(server: McpServer, odoo: OdooClient) {
       }
     }
   );
+
+  // ─── Outils Odoo génériques (requis par std-performer) ───
+
+  server.tool(
+    "odoo_search_read",
+    "Recherche et lecture d'enregistrements Odoo. Supporte tous les modèles (sale.order, account.move, crm.lead, res.users, etc.).",
+    {
+      model: z.string().describe("Nom du modèle Odoo, ex: 'sale.order', 'account.move', 'crm.lead'"),
+      domain: z.array(z.any()).optional().default([]).describe("Filtre domaine Odoo, ex: [[\"state\",\"=\",\"posted\"]]"),
+      fields: z.array(z.string()).optional().describe("Champs à retourner"),
+      limit: z.number().optional().default(100).describe("Nombre max d'enregistrements"),
+      offset: z.number().optional().describe("Décalage pour la pagination"),
+      order: z.string().optional().describe("Tri, ex: 'date_order desc'"),
+    },
+    async ({ model, domain, fields, limit, offset, order }) => {
+      try {
+        const result = await odoo.searchRead(model, domain ?? [], fields, limit, offset, order);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "odoo_read",
+    "Lecture d'enregistrements Odoo par leurs IDs.",
+    {
+      model: z.string().describe("Nom du modèle Odoo"),
+      ids: z.array(z.number()).describe("Liste d'IDs à lire"),
+      fields: z.array(z.string()).optional().describe("Champs à retourner"),
+    },
+    async ({ model, ids, fields }) => {
+      try {
+        const result = await odoo.read(model, ids, fields);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "odoo_count",
+    "Compte le nombre d'enregistrements correspondant au domaine.",
+    {
+      model: z.string().describe("Nom du modèle Odoo"),
+      domain: z.array(z.any()).optional().default([]).describe("Filtre domaine Odoo"),
+    },
+    async ({ model, domain }) => {
+      try {
+        const result = await odoo.searchCount(model, domain ?? []);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "odoo_create",
+    "Crée un ou plusieurs enregistrements dans un modèle Odoo.",
+    {
+      model: z.string().describe("Nom du modèle Odoo"),
+      values: z.record(z.any()).describe("Valeurs à créer"),
+    },
+    async ({ model, values }) => {
+      try {
+        const result = await odoo.create(model, values);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "odoo_update",
+    "Met à jour des enregistrements Odoo.",
+    {
+      model: z.string().describe("Nom du modèle Odoo"),
+      ids: z.array(z.number()).describe("Liste d'IDs à mettre à jour"),
+      values: z.record(z.any()).describe("Valeurs à mettre à jour"),
+    },
+    async ({ model, ids, values }) => {
+      try {
+        const result = await odoo.write(model, ids, values);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "odoo_delete",
+    "Supprime des enregistrements Odoo.",
+    {
+      model: z.string().describe("Nom du modèle Odoo"),
+      ids: z.array(z.number()).describe("Liste d'IDs à supprimer"),
+    },
+    async ({ model, ids }) => {
+      try {
+        const result = await odoo.unlink(model, ids);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "odoo_get_fields",
+    "Retourne les définitions des champs d'un modèle Odoo.",
+    {
+      model: z.string().describe("Nom du modèle Odoo"),
+      attributes: z.array(z.string()).optional().describe("Attributs à retourner (string, type, required, etc.)"),
+    },
+    async ({ model, attributes }) => {
+      try {
+        const result = await odoo.fieldsGet(model, attributes);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "odoo_list_models",
+    "Liste les modèles disponibles dans Odoo. Filtre optionnel par nom.",
+    {
+      filter: z.string().optional().describe("Filtre optionnel par nom de modèle"),
+    },
+    async ({ filter }) => {
+      try {
+        const result = await odoo.listModels(filter);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "odoo_resolve_users",
+    "Résout les utilisateurs Odoo par login (email) ou ID.",
+    {
+      logins: z.array(z.string()).optional().describe("Liste d'emails à résoudre"),
+      ids: z.array(z.number()).optional().describe("Liste d'IDs utilisateurs"),
+    },
+    async ({ logins, ids }) => {
+      try {
+        const domain: unknown[] = [];
+        if (logins?.length) domain.push(["login", "in", logins]);
+        else if (ids?.length) domain.push(["id", "in", ids]);
+        const result = await odoo.searchRead("res.users", domain, ["id", "name", "login", "email"], 100);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "odoo_batch",
+    "Exécute plusieurs requêtes odoo_search_read en parallèle.",
+    {
+      requests: z.array(z.object({
+        model: z.string(),
+        domain: z.array(z.any()).optional(),
+        fields: z.array(z.string()).optional(),
+        limit: z.number().optional(),
+        order: z.string().optional(),
+      })).describe("Liste de requêtes à exécuter en parallèle"),
+    },
+    async ({ requests }) => {
+      try {
+        const results = await Promise.all(
+          requests.map(r => odoo.searchRead(r.model, r.domain ?? [], r.fields, r.limit, undefined, r.order))
+        );
+        return { content: [{ type: "text" as const, text: JSON.stringify(results) }] };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      }
+    }
+  );
 }
